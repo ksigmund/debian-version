@@ -14,13 +14,15 @@ module Version =
         | Number of string
 
         member this.IntValue =
-            match this with
-            | Number str -> str |> int32
+            match this with Number str -> str |> int32
 
         static member create(str: string) =
             match (str |> int32) with
             | i when i >= 0 -> Number str
             | _ -> failwith $"{nameof (IntString)} must be a positive integer"
+
+        override this.ToString() =
+            match this with Number str -> str
 
     type Epoch = Epoch of IntString
 
@@ -35,7 +37,7 @@ module Version =
                 match (this, segment) with
                 | Number a, Number b -> a.IntValue.CompareTo(b.IntValue)
                 | String a, String b -> a.CompareTo(b)
-                | Number a, String b -> (string a).CompareTo(b)
+                | Number a, String b -> a.ToString().CompareTo(b)
                 | String a, Number b -> a.CompareTo(string b)
                 | Tilde, Tilde -> 0
                 | Tilde, _ -> 1
@@ -120,19 +122,17 @@ module Version =
 
             override this.GetHashCode() = hash this
 
-
-
         type SegmentParser = Parser<Segment, unit>
 
         let hyphen: Parser<unit, unit> = skipChar '-'
 
-        let versionSegmentDelimiter = skipAnyOf [ '.'; '+'; ':' ] <|> hyphen
+        let versionSegmentDelimiter: Parser<unit,unit> = skipAnyOf [ '.'; '+'; ':' ] <|> hyphen
 
-        let revisionSegmentDelimiter: Parser<unit, unit> = skipAnyOf [ '.'; '+' ]
+        let revisionSegmentDelimiter : Parser<unit, unit> = skipAnyOf [ '.'; '+' ]
 
-        let pTilde = pchar '~' >>% Tilde
+        let pTilde: Parser<Segment,unit> = pchar '~' >>% Tilde
 
-        let pEpoch =
+        let pEpoch : Parser<Epoch option, unit> =
             let intEpoch =
                 attempt (manyChars digit .>> skipChar ':')
                 |>> (IntString.create >> Epoch >> Some)
@@ -145,16 +145,16 @@ module Version =
             let noEpoch = preturn None
             choice [ intEpoch; nonIntEpoch; noEpoch ]
 
-        let pNumericSegment: SegmentParser =
+        let pNumericSegment : SegmentParser =
             (many1Chars digit) |>> (string >> IntString.create >> Number)
 
-        let pString: SegmentParser = (many1Chars letter) |>> String
+        let pString : SegmentParser = (many1Chars letter) |>> String
 
-        let pSegment: SegmentParser = choice [ pNumericSegment; pTilde; pString ]
+        let pSegment : SegmentParser = choice [ pNumericSegment; pTilde; pString ]
 
-        let pSegments = many1 pSegment
+        let pSegments: Parser<Segment list,unit> = many pSegment
 
-        let pDebianRevision =
+        let pDebianRevision : Parser<SegmentList option, unit> =
             let debianRevision =
                 hyphen >>. pSegments .>>. (many (revisionSegmentDelimiter >>. pSegments))
                 .>> eof
@@ -163,15 +163,15 @@ module Version =
             let noDebianRevision = eof >>% None
             choice [ debianRevision; noDebianRevision ]
 
-        let pUpstreamVersion =
+        let pUpstreamVersion: Parser<SegmentList,unit> =
             pSegments
             .>>. (manyTill (versionSegmentDelimiter >>. pSegments) (followedBy pDebianRevision))
             |>> SegmentList.create
 
-        let pDebianVersion =
+        let pDebianVersion: Parser<DebianVersion,unit> =
             parse {
                 let! epoch = pEpoch
-                let! (upstreamVersion) = pUpstreamVersion
+                let! upstreamVersion = pUpstreamVersion
                 let! debianRevision = pDebianRevision
 
                 return
@@ -180,14 +180,14 @@ module Version =
                       DebianRevision = debianRevision }
             }
 
-        let mapResult result =
+        let mapResult (result: ParserResult<'a,'b>) =
             match result with
             | Success(res, _, _) -> Result.Ok res
             | Failure(err, _, _) -> Result.Error err
 
     open Parsing
 
-    let compare v1 v2 =
+    let compare (v1: string) (v2: string) =
         result {
             let! a' = (run pDebianVersion v1) |> mapResult
             let! b' = (run pDebianVersion v2) |> mapResult
